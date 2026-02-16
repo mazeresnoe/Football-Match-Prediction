@@ -1,0 +1,153 @@
+# ========================================
+# PYTHON
+# ========================================
+# Bytecode
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+
+# Distribution / packaging
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+
+# Virtual environments
+venv/
+env/
+ENV/
+.venv
+pip-log.txt
+pip-delete-this-directory.txt
+
+# ========================================
+# DATA (trop volumineux pour GitHub)
+# ========================================
+data/
+*.csv
+*.json
+
+# EXCEPTIONS : garder certains fichiers essentiels
+!requirements.txt
+!**/README.md
+!**/metadata.json
+!**/*_config.json
+
+# ========================================
+# MODELS (fichiers trop gros)
+# ========================================
+models/saved/
+*.pkl
+*.h5
+*.model
+*.joblib
+*.pt
+*.pth
+
+# ========================================
+# RESULTS (volumineux)
+# ========================================
+# Supprimer tous les CSV/JSON dans results/
+results/**/*.csv
+results/**/*.json
+results/**/*.html
+
+# EXCEPTION : Garder les images (pour README)
+!results/**/*.png
+!results/**/*.jpg
+!results/**/*.jpeg
+
+# ========================================
+# SECRETS (ne JAMAIS commit)
+# ========================================
+.env
+.env.local
+.env.*.local
+*.key
+*.pem
+secrets/
+credentials/
+config.ini
+
+# ========================================
+# IDE / EDITORS
+# ========================================
+# VSCode
+.vscode/
+*.code-workspace
+
+# PyCharm
+.idea/
+*.iml
+
+# Jupyter
+.ipynb_checkpoints/
+*.ipynb
+
+# Vim
+*.swp
+*.swo
+*~
+
+# ========================================
+# OS
+# ========================================
+# Windows
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+$RECYCLE.BIN/
+
+# macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+
+# Linux
+*~
+
+# ========================================
+# TEMPORAIRES / LOGS
+# ========================================
+*.log
+*.tmp
+*.temp
+*.bak
+*.cache
+logs/
+
+# ========================================
+# FICHIERS SPÉCIFIQUES À TON PROJET
+# ========================================
+# Scripts temporaires
+reorganize_xgboost.py
+structure_projet.txt
+
+# Archives
+**/archive/
+
+# Progression du scraping (si tu veux)
+data/raw/scraping_progress/
+
+# Anciens résultats EDA
+preprocessing/1_etape/eda/
+src/preprocessing/
+
+# ========================================
+# GIT
+# ========================================
+*.orig
+*.rej
