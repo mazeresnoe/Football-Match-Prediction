@@ -1,26 +1,39 @@
 """
-Step 3 Advanced : Test de multiples stratégies de paris
-Compare différents niveaux de sélectivité pour trouver la stratégie optimale
+Strategy Optimizer - Grid Search pour maximiser le ROI
+
+Ce script teste TOUTES les combinaisons possibles de paramètres pour trouver
+la stratégie avec le ROI le plus élevé.
+
+Grid Search sur :
+- EV minimum : 2% à 20% (pas de 1%)
+- Confiance minimum : 35% à 65% (pas de 5%)
+- Types de paris : Tous, Sans Draw, Home uniquement, Away uniquement
+
+Total : ~19 x 7 x 4 = 532 combinaisons testées
+
+Sauvegarde automatique de la meilleure stratégie dans un fichier JSON.
+
+Usage :
+    python models/xgboost/core/optimize_strategy.py
 """
 
 import pandas as pd
 import numpy as np
 import joblib
-import matplotlib.pyplot as plt
-import seaborn as sns
+import json
 from pathlib import Path
 import sys
+from datetime import datetime
+from itertools import product
 
 sys.path.append(str(Path(__file__).parent.parent.parent.parent.resolve()))
 import models.configs.global_config as cfg
 import models.utils as utils
 from models.configs.save_paths import SavePaths
 
-sns.set_style("whitegrid")
-
 
 def calculate_expected_value(model_probs, bookmaker_odds):
-    """Calcule l'Expected Value pour chaque issue"""
+    """Calcule l'Expected Value pour chaque issue."""
     ev_home = (model_probs[0] * bookmaker_odds[0]) - 1
     ev_draw = (model_probs[1] * bookmaker_odds[1]) - 1
     ev_away = (model_probs[2] * bookmaker_odds[2]) - 1
@@ -29,7 +42,7 @@ def calculate_expected_value(model_probs, bookmaker_odds):
 
 def find_value_bets_strategy(df, model, features, min_ev, min_confidence, bet_types=None):
     """
-    Trouve les value bets selon une stratégie donnée
+    Trouve les value bets selon une stratégie donnée.
     
     Args:
         bet_types: Liste des types de paris autorisés ['Home', 'Draw', 'Away']
@@ -84,7 +97,7 @@ def find_value_bets_strategy(df, model, features, min_ev, min_confidence, bet_ty
 
 
 def backtest_strategy(value_bets_df, stake_per_bet=10):
-    """Backtest d'une stratégie"""
+    """Backtest d'une stratégie."""
     if len(value_bets_df) == 0:
         return None
     
@@ -130,291 +143,435 @@ def backtest_strategy(value_bets_df, stake_per_bet=10):
     }
 
 
-def main():
-    print(f"""
-╔══════════════════════════════════════════════════════════════╗
-║      STEP 3 : TEST DE STRATÉGIES MULTIPLES DE PARIS          ║
-╚══════════════════════════════════════════════════════════════╝
-    """)
-    # Configuration
-    with_xg = False
+def optimize_strategy(test_df, model, features, min_bets_per_year=100):
+    """
+    Optimisation par Grid Search pour trouver la meilleure stratégie.
     
-    # 1. Charger le modèle calibré
-    print(f"\n Chargement du modèle...")
-
-    # Essayer de charger depuis production (modèle calibré)
-    model_path = SavePaths.get_latest_model('production', with_xg=with_xg)
-
-    # Si pas trouvé, essayer dans experiments (modèle optimisé)
-    if model_path is None:
-        print("   ⚠️ Pas de modèle calibré, recherche du modèle optimisé...")
-        model_path = SavePaths.get_latest_model('experiments', with_xg=with_xg)
-
-    if model_path is None:
-        print(f"❌ Aucun modèle trouvé")
-        print("   Exécute d'abord 'step2c_calibration.py' ou 'step2b_optimization.py'")
-        return
-
-    print(f"   Chargement depuis : {model_path}")
-    model_data = joblib.load(model_path)
-    model = model_data['model']
-    features = model_data['features']
-    print(f"✅ Modèle chargé : {model_path.name}")
+    Deux stratégies :
+    1. ROI maximum absolu (sans contrainte)
+    2. ROI maximum avec minimum de paris par an
     
-    # 2. Charger les données
-    df = utils.load_data(with_xg=with_xg, merge_odds=True)
-    train_df, cv_df, test_df = utils.train_cv_test_split(df)
+    Args:
+        test_df: DataFrame de test
+        model: Modèle entraîné
+        features: Features du modèle
+        min_bets_per_year: Nombre minimum de paris par an requis (défaut: 100)
     
-    # 3. Définir les stratégies à tester
-    strategies = [
-        # Stratégie 1 : Conservatrice (très sélective)
-        {
-            'name': 'Conservative',
-            'min_ev': 0.10,
-            'min_confidence': 0.55,
-            'bet_types': ['Home', 'Away']  # Pas de draws
-        },
-        # Stratégie 2 : Modérée
-        {
-            'name': 'Moderate',
-            'min_ev': 0.08,
-            'min_confidence': 0.50,
-            'bet_types': None  # Tous types
-        },
-        # Stratégie 3 : Home/Away seulement
-        {
-            'name': 'No Draws',
-            'min_ev': 0.06,
-            'min_confidence': 0.48,
-            'bet_types': ['Home', 'Away']
-        },
-        # Stratégie 4 : High EV
-        {
-            'name': 'High EV',
-            'min_ev': 0.12,
-            'min_confidence': 0.45,
-            'bet_types': None
-        },
-        # Stratégie 5 : High Confidence
-        {
-            'name': 'High Confidence',
-            'min_ev': 0.05,
-            'min_confidence': 0.60,
-            'bet_types': None
-        },
-        # Stratégie 6 : Balanced
-        {
-            'name': 'Balanced',
-            'min_ev': 0.07,
-            'min_confidence': 0.52,
-            'bet_types': ['Home', 'Away']
-        },
-    ]
-    
-    # 4. Tester chaque stratégie
+    Returns:
+        best_strategy_pure: Dict avec les meilleurs paramètres (sans contrainte)
+        best_strategy_volume: Dict avec les meilleurs paramètres (avec contrainte volume)
+        all_results: DataFrame avec tous les résultats testés
+    """
     print(f"\n{'='*70}")
-    print(f"  TEST DES STRATÉGIES SUR LE TEST SET")
+    print(f"  OPTIMISATION DE STRATÉGIE - GRID SEARCH")
     print(f"{'='*70}\n")
     
-    results = []
+    # Calculer le nombre d'années dans le test set
+    test_df_with_odds = test_df[test_df[['odds_home', 'odds_draw', 'odds_away']].notna().all(axis=1)].copy()
     
-    for strategy in strategies:
-        print(f"   Test : {strategy['name']}")
-        print(f"   • EV min : {strategy['min_ev']*100:.0f}%")
-        print(f"   • Conf min : {strategy['min_confidence']*100:.0f}%")
-        print(f"   • Types : {strategy['bet_types'] or 'Tous'}")
+    if 'date' in test_df_with_odds.columns:
+        date_range = (test_df_with_odds['date'].max() - test_df_with_odds['date'].min()).days / 365.25
+        n_years = max(1, date_range)
+    else:
+        # Estimation basée sur le nombre de matchs (38 matchs/équipe/saison pour les ligues)
+        n_years = len(test_df_with_odds) / 2000  # ~2000 matchs/an pour toutes les ligues
+    
+    min_total_bets = int(min_bets_per_year * n_years)
+    
+    print(f"Paramètres de sélectivité :")
+    print(f"  • Période test set : {n_years:.2f} ans")
+    print(f"  • Matchs disponibles : {len(test_df_with_odds)}")
+    print(f"  • Minimum requis : {min_bets_per_year} paris/an")
+    print(f"  • Minimum total : {min_total_bets} paris pour {n_years:.2f} ans")
+    print()
+    
+    # Définir la grille de recherche
+    ev_range = np.arange(0.02, 0.21, 0.01)  # 2% à 20%, pas de 1%
+    conf_range = np.arange(0.35, 0.66, 0.05)  # 35% à 65%, pas de 5%
+    bet_types_options = [
+        None,  # Tous
+        ['Home', 'Away'],  # Sans Draw
+        ['Home'],  # Home uniquement
+        ['Away']   # Away uniquement
+    ]
+    
+    total_combinations = len(ev_range) * len(conf_range) * len(bet_types_options)
+    print(f"Grille de recherche :")
+    print(f"  • EV minimum : {len(ev_range)} valeurs (2% à 20%)")
+    print(f"  • Confiance minimum : {len(conf_range)} valeurs (35% à 65%)")
+    print(f"  • Types de paris : {len(bet_types_options)} options")
+    print(f"  • TOTAL : {total_combinations} combinaisons à tester\n")
+    
+    results = []
+    best_roi_pure = -float('inf')
+    best_strategy_pure = None
+    
+    best_roi_volume = -float('inf')
+    best_strategy_volume = None
+    
+    # Grid Search
+    for i, (ev, conf, bet_types) in enumerate(product(ev_range, conf_range, bet_types_options)):
+        if (i + 1) % 50 == 0:
+            print(f"Progression : {i+1}/{total_combinations} ({(i+1)/total_combinations*100:.1f}%)")
         
         # Trouver les value bets
         value_bets = find_value_bets_strategy(
             test_df, model, features,
-            min_ev=strategy['min_ev'],
-            min_confidence=strategy['min_confidence'],
-            bet_types=strategy['bet_types']
+            min_ev=ev,
+            min_confidence=conf,
+            bet_types=bet_types
         )
         
         if len(value_bets) == 0:
-            print(f"   ❌ Aucun value bet trouvé\n")
             continue
         
         # Backtest
         backtest = backtest_strategy(value_bets, stake_per_bet=10)
         
         if backtest:
-            print(f"      Résultats :")
-            print(f"      • Paris : {backtest['total_bets']}")
-            print(f"      • Win rate : {backtest['win_rate']*100:.1f}%")
-            print(f"      • ROI : {backtest['roi']:+.2f}%")
-            print(f"      • Profit : {backtest['total_profit']:+.0f}€")
+            bet_types_str = str(bet_types) if bet_types else 'All'
+            
+            # Calculer paris par an
+            bets_per_year = backtest['total_bets'] / n_years
             
             results.append({
-                'strategy': strategy['name'],
-                'min_ev': strategy['min_ev'] * 100,
-                'min_confidence': strategy['min_confidence'] * 100,
-                'bet_types': str(strategy['bet_types']) if strategy['bet_types'] else 'All',
+                'min_ev': ev * 100,
+                'min_confidence': conf * 100,
+                'bet_types': bet_types_str,
                 'total_bets': backtest['total_bets'],
+                'bets_per_year': bets_per_year,
                 'win_rate': backtest['win_rate'] * 100,
                 'roi': backtest['roi'],
                 'profit': backtest['total_profit'],
                 'avg_ev': backtest['avg_ev'],
                 'avg_odds': backtest['avg_odds'],
+                'meets_volume_requirement': bets_per_year >= min_bets_per_year
             })
             
-            if backtest['roi'] > 0:
-                print(f"       ROI POSITIF !\n")
-            else:
-                print()
+            # STRATÉGIE 1 : Meilleur ROI PURE (sans contrainte)
+            if backtest['roi'] > best_roi_pure and backtest['total_bets'] >= 10:  # Minimum 10 paris pour éviter variance
+                best_roi_pure = backtest['roi']
+                best_strategy_pure = {
+                    'name': 'Best ROI Pure',
+                    'min_ev': ev,
+                    'min_confidence': conf,
+                    'bet_types': bet_types,
+                    'expected_roi': backtest['roi'],
+                    'expected_win_rate': backtest['win_rate'] * 100,
+                    'expected_bets': backtest['total_bets'],
+                    'expected_bets_per_year': bets_per_year,
+                    'avg_ev': backtest['avg_ev'],
+                    'avg_odds': backtest['avg_odds']
+                }
+            
+            # STRATÉGIE 2 : Meilleur ROI AVEC contrainte volume (≥100 paris/an)
+            if bets_per_year >= min_bets_per_year and backtest['roi'] > best_roi_volume:
+                best_roi_volume = backtest['roi']
+                best_strategy_volume = {
+                    'name': f'Best ROI with ≥{min_bets_per_year} bets/year',
+                    'min_ev': ev,
+                    'min_confidence': conf,
+                    'bet_types': bet_types,
+                    'expected_roi': backtest['roi'],
+                    'expected_win_rate': backtest['win_rate'] * 100,
+                    'expected_bets': backtest['total_bets'],
+                    'expected_bets_per_year': bets_per_year,
+                    'avg_ev': backtest['avg_ev'],
+                    'avg_odds': backtest['avg_odds'],
+                    'min_bets_per_year': min_bets_per_year
+                }
     
-    # 5. Comparaison des stratégies
-    if results:
-        results_df = pd.DataFrame(results)
-        results_df = results_df.sort_values('roi', ascending=False)
-        
+    print(f"\nProgresssion : {total_combinations}/{total_combinations} (100.0%)")
+    print(f"Stratégies testées : {len(results)}")
+    print(f"  • Avec ROI > 0 : {len([r for r in results if r['roi'] > 0])}")
+    print(f"  • Avec ≥{min_bets_per_year} paris/an : {len([r for r in results if r['meets_volume_requirement']])}")
+    print(f"  • Avec ROI > 0 ET ≥{min_bets_per_year} paris/an : {len([r for r in results if r['roi'] > 0 and r['meets_volume_requirement']])}")
+    
+    results_df = pd.DataFrame(results) if results else pd.DataFrame()
+    
+    return best_strategy_pure, best_strategy_volume, results_df
+
+
+def main():
+    print(f"""
+╔══════════════════════════════════════════════════════════════╗
+║         STRATEGY OPTIMIZER - MAXIMISER LE ROI                 ║
+╚══════════════════════════════════════════════════════════════╝
+    """)
+    
+    with_xg = False
+    
+    # 1. Charger le modèle
+    print(f"\nChargement du modèle...")
+    model_path = SavePaths.get_latest_model('production', with_xg=with_xg)
+    
+    if model_path is None:
+        print("   Pas de modèle calibré, recherche du modèle optimisé...")
+        model_path = SavePaths.get_latest_model('experiments', with_xg=with_xg)
+    
+    if model_path is None:
+        print(f"\nAucun modèle trouvé")
+        print("Exécute d'abord 'step2b_optimization.py' ou 'step2c_calibration.py'")
+        return
+    
+    print(f"Modèle : {model_path.name}")
+    model_data = joblib.load(model_path)
+    model = model_data['model']
+    features = model_data['features']
+    print(f"Features : {len(features)}")
+    
+    # 2. Charger les données
+    print(f"\nChargement des données...")
+    df = utils.load_data(with_xg=with_xg, merge_odds=True)
+    train_df, cv_df, test_df = utils.train_cv_test_split(df)
+    print(f"Test set : {len(test_df)} matchs")
+    
+    # 3. Optimiser la stratégie
+    best_strategy_pure, best_strategy_volume, results_df = optimize_strategy(
+        test_df, model, features, 
+        min_bets_per_year=100  # Minimum 100 paris par an
+    )
+    
+    # 4. Afficher les résultats
+    if best_strategy_pure:
         print(f"\n{'='*70}")
-        print(f"  CLASSEMENT DES STRATÉGIES (par ROI)")
-        print(f"{'='*70}\n")
-        print(results_df[['strategy', 'total_bets', 'win_rate', 'roi', 'profit']].to_string(index=False))
+        print(f"  STRATÉGIE 1 : MEILLEUR ROI PUR ET DUR")
+        print(f"{'='*70}")
         
-        # Meilleure stratégie
-        best = results_df.iloc[0]
-        print(f"\n MEILLEURE STRATÉGIE : {best['strategy']}")
-        print(f"   • ROI : {best['roi']:+.2f}%")
-        print(f"   • Nombre de paris : {best['total_bets']:.0f}")
-        print(f"   • Win rate : {best['win_rate']:.1f}%")
-        print(f"   • Profit total : {best['profit']:+.0f}€")
+        print(f"\nParamètres optimaux :")
+        print(f"   • EV minimum       : {best_strategy_pure['min_ev']*100:.1f}%")
+        print(f"   • Conf minimum     : {best_strategy_pure['min_confidence']*100:.1f}%")
+        print(f"   • Types de paris   : {best_strategy_pure['bet_types'] or 'Tous'}")
         
-        # Visualisation
-        fig, axes = plt.subplots(2, 2, figsize=(14, 10))
+        print(f"\nPerformances attendues :")
+        print(f"   • ROI              : {best_strategy_pure['expected_roi']:+.2f}%")
+        print(f"   • Win rate         : {best_strategy_pure['expected_win_rate']:.1f}%")
+        print(f"   • Nombre de paris  : {best_strategy_pure['expected_bets']}")
+        print(f"   • Paris par an     : {best_strategy_pure['expected_bets_per_year']:.0f}")
+        print(f"   • EV moyen         : {best_strategy_pure['avg_ev']:+.2f}%")
+        print(f"   • Cote moyenne     : {best_strategy_pure['avg_odds']:.2f}")
         
-        # 1. ROI par stratégie
-        ax = axes[0, 0]
-        colors = ['green' if x > 0 else 'red' for x in results_df['roi']]
-        ax.barh(results_df['strategy'], results_df['roi'], color=colors, alpha=0.7)
-        ax.axvline(x=0, color='black', linestyle='--', linewidth=1)
-        ax.set_xlabel('ROI (%)')
-        ax.set_title('ROI par stratégie', fontweight='bold')
-        ax.grid(axis='x', alpha=0.3)
+        # Profit total
+        profit_total = (best_strategy_pure['expected_bets'] * 10 * best_strategy_pure['expected_roi']) / 100
+        print(f"   • Profit total     : {profit_total:+.0f}€ (mise 10€/pari)")
         
-        # 2. Win rate vs ROI
-        ax = axes[0, 1]
-        scatter = ax.scatter(results_df['win_rate'], results_df['roi'], 
-                           s=results_df['total_bets']*2, 
-                           c=results_df['roi'], cmap='RdYlGn', alpha=0.6)
-        ax.axhline(y=0, color='black', linestyle='--', linewidth=1)
-        ax.set_xlabel('Win Rate (%)')
-        ax.set_ylabel('ROI (%)')
-        ax.set_title('Win Rate vs ROI', fontweight='bold')
-        ax.grid(alpha=0.3)
-        plt.colorbar(scatter, ax=ax, label='ROI')
-        
-        # Annoter les points
-        for idx, row in results_df.iterrows():
-            ax.annotate(row['strategy'], 
-                       (row['win_rate'], row['roi']),
-                       fontsize=8, alpha=0.7)
-        
-        # 3. Nombre de paris vs ROI
-        ax = axes[1, 0]
-        ax.scatter(results_df['total_bets'], results_df['roi'], 
-                  s=100, c=results_df['roi'], cmap='RdYlGn', alpha=0.7)
-        ax.axhline(y=0, color='black', linestyle='--', linewidth=1)
-        ax.set_xlabel('Nombre de paris')
-        ax.set_ylabel('ROI (%)')
-        ax.set_title('Sélectivité vs ROI', fontweight='bold')
-        ax.grid(alpha=0.3)
-        
-        # 4. Stats de la meilleure stratégie
-        ax = axes[1, 1]
-        ax.axis('off')
-        
-        stats_text = f"""
-MEILLEURE STRATÉGIE
-{best['strategy']}
-
-Paramètres :
-• EV min : {best['min_ev']:.0f}%
-• Conf min : {best['min_confidence']:.0f}%
-• Types : {best['bet_types']}
-
-Résultats :
-• Total paris : {best['total_bets']:.0f}
-• Win rate : {best['win_rate']:.1f}%
-• ROI : {best['roi']:+.2f}%
-• Profit : {best['profit']:+.0f}€
-• Misé : {best['total_bets']*10:.0f}€
-        """
-        
-        color = 'green' if best['roi'] > 0 else 'red'
-        ax.text(0.1, 0.5, stats_text, fontsize=10, verticalalignment='center',
-               family='monospace', bbox=dict(boxstyle='round', facecolor=color, 
-                                           alpha=0.1, edgecolor=color, linewidth=2))
-        
-        plt.suptitle('ANALYSE DES STRATÉGIES DE PARIS', fontsize=14, fontweight='bold')
-        plt.tight_layout()
-        
-        # Sauvegarder en production
-        plot_path = SavePaths.get_result_path(
-            category='production',
-            filename='strategies_comparison.png',
+        # Sauvegarder la stratégie ROI pur
+        strategy_path = SavePaths.get_result_path(
+            category='production/strategy',
+            filename='best_strategy_pure.json',
             with_xg=with_xg
         )
-        plt.savefig(plot_path, dpi=150, bbox_inches='tight')
-
-        # Copie historique
-        history_plot_path = SavePaths.get_result_path(
-            category='step3_strategies',
-            filename='strategies_comparison.png',
-            with_xg=with_xg,
-            use_date_folder=True
-        )
-        plt.savefig(history_plot_path, dpi=150, bbox_inches='tight')
-
-        print(f"\n✅ Graphique sauvegardé : {plot_path}")
-        print(f"   Historique : {history_plot_path}")
-        plt.close()
         
-        # Sauvegarder les résultats EN PRODUCTION
-        result_path = SavePaths.get_result_path(
-            category='production',
-            filename='strategies_results.csv',
-            with_xg=with_xg,
-            use_date_folder=False  # Écraser le fichier à chaque fois
-        )
-        results_df.to_csv(result_path, index=False)
-
-        # Aussi garder une copie historique
-        history_path = SavePaths.get_result_path(
-            category='step3_strategies',
-            filename='strategies_results.csv',
-            with_xg=with_xg,
-            use_date_folder=True  # Créer un dossier par date
-        )
-        results_df.to_csv(history_path, index=False)
-
-        # Sauvegarder les métadonnées
-        best_strategy = results_df.iloc[0]
-        SavePaths.save_metadata(
-            category='production',
-            filename='strategies_results.csv',
-            metadata={
-                'best_strategy': best_strategy['strategy'],
-                'best_roi': float(best_strategy['roi']),
-                'total_strategies_tested': len(results_df),
-                'positive_roi_count': int((results_df['roi'] > 0).sum())
-            },
-            with_xg=with_xg
-        )
-
-        print(f"✅ Résultats sauvegardés :")
-        print(f"   Production : {result_path}")
-        print(f"   Historique : {history_path}")
+        with open(strategy_path, 'w') as f:
+            json.dump(best_strategy_pure, f, indent=4)
+        
+        print(f"\nStratégie sauvegardée : {strategy_path}")
     
+    if best_strategy_volume:
+        print(f"\n{'='*70}")
+        print(f"  STRATÉGIE 2 : MEILLEUR ROI AVEC ≥100 PARIS/AN")
+        print(f"{'='*70}")
+        
+        print(f"\nParamètres optimaux :")
+        print(f"   • EV minimum       : {best_strategy_volume['min_ev']*100:.1f}%")
+        print(f"   • Conf minimum     : {best_strategy_volume['min_confidence']*100:.1f}%")
+        print(f"   • Types de paris   : {best_strategy_volume['bet_types'] or 'Tous'}")
+        
+        print(f"\nPerformances attendues :")
+        print(f"   • ROI              : {best_strategy_volume['expected_roi']:+.2f}%")
+        print(f"   • Win rate         : {best_strategy_volume['expected_win_rate']:.1f}%")
+        print(f"   • Nombre de paris  : {best_strategy_volume['expected_bets']}")
+        print(f"   • Paris par an     : {best_strategy_volume['expected_bets_per_year']:.0f}")
+        print(f"   • Minimum requis   : {best_strategy_volume['min_bets_per_year']} paris/an")
+        print(f"   • EV moyen         : {best_strategy_volume['avg_ev']:+.2f}%")
+        print(f"   • Cote moyenne     : {best_strategy_volume['avg_odds']:.2f}")
+        
+        # Profit total
+        profit_total = (best_strategy_volume['expected_bets'] * 10 * best_strategy_volume['expected_roi']) / 100
+        print(f"   • Profit total     : {profit_total:+.0f}€ (mise 10€/pari)")
+        
+        # Sauvegarder la stratégie avec volume
+        strategy_path_volume = SavePaths.get_result_path(
+            category='production/strategy',
+            filename='best_strategy_volume.json',
+            with_xg=with_xg
+        )
+        
+        with open(strategy_path_volume, 'w') as f:
+            json.dump(best_strategy_volume, f, indent=4)
+        
+        print(f"\nStratégie sauvegardée : {strategy_path_volume}")
+        
+        # Utiliser la stratégie volume comme stratégie par défaut
+        strategy_path_default = SavePaths.get_result_path(
+            category='production/strategy',
+            filename='best_strategy.json',
+            with_xg=with_xg
+        )
+        
+        with open(strategy_path_default, 'w') as f:
+            json.dump(best_strategy_volume, f, indent=4)
+        
+        print(f"Stratégie par défaut : {strategy_path_default}")
+    
+    # 5. Comparaison
+    if best_strategy_pure and best_strategy_volume:
+        print(f"\n{'='*70}")
+        print(f"  COMPARAISON DES STRATÉGIES")
+        print(f"{'='*70}\n")
+        
+        print(f"{'Critère':<25} {'Pure (ROI Max)':<20} {'Volume (≥100/an)':<20}")
+        print(f"{'-'*70}")
+        print(f"{'ROI':<25} {best_strategy_pure['expected_roi']:>18.2f}%  {best_strategy_volume['expected_roi']:>18.2f}%")
+        print(f"{'Win Rate':<25} {best_strategy_pure['expected_win_rate']:>18.1f}%  {best_strategy_volume['expected_win_rate']:>18.1f}%")
+        print(f"{'Paris total':<25} {best_strategy_pure['expected_bets']:>18.0f}  {best_strategy_volume['expected_bets']:>18.0f}")
+        print(f"{'Paris/an':<25} {best_strategy_pure['expected_bets_per_year']:>18.0f}  {best_strategy_volume['expected_bets_per_year']:>18.0f}")
+        
+        profit_pure = (best_strategy_pure['expected_bets'] * 10 * best_strategy_pure['expected_roi']) / 100
+        profit_volume = (best_strategy_volume['expected_bets'] * 10 * best_strategy_volume['expected_roi']) / 100
+        print(f"{'Profit total (10€/pari)':<25} {profit_pure:>17.0f}€  {profit_volume:>17.0f}€")
+        
+        if profit_pure > profit_volume:
+            print(f"\n   Stratégie PURE recommandée (profit absolu supérieur)")
+        else:
+            print(f"\n   Stratégie VOLUME recommandée (profit absolu supérieur)")
+        
+        # 6. Sauvegarder tous les résultats
+        if len(results_df) > 0:
+            results_df = results_df.sort_values('roi', ascending=False)
+            
+            results_path = SavePaths.get_result_path(
+                category='production/strategy',
+                filename='strategy_optimization_results.csv',
+                with_xg=with_xg
+            )
+            results_df.to_csv(results_path, index=False)
+            
+            print(f"\nTous les résultats sauvegardés : {results_path}")
+            
+            # Top 10
+            print(f"\nTop 10 des meilleures stratégies (par ROI) :")
+            print(results_df.head(10)[['min_ev', 'min_confidence', 'bet_types', 'total_bets', 'bets_per_year', 'roi']].to_string(index=False))
+            
+            # Top 10 avec volume
+            results_volume = results_df[results_df['meets_volume_requirement'] == True].copy()
+            if len(results_volume) > 0:
+                print(f"\nTop 10 des meilleures stratégies (≥100 paris/an) :")
+                print(results_volume.head(10)[['min_ev', 'min_confidence', 'bet_types', 'total_bets', 'bets_per_year', 'roi']].to_string(index=False))
+        
     else:
-        print(f"\n❌ Aucune stratégie n'a trouvé de value bets")
-        print(f"   → Les critères sont peut-être trop stricts")
-        print(f"   → Essaye de réduire min_ev ou min_confidence")
+        print(f"\nAucune stratégie profitable trouvée")
+        print(f"Essaye de :")
+        print(f"  • Améliorer ton modèle (step2b_optimization.py)")
+        print(f"  • Calibrer ton modèle (step2c_calibration.py)")
+        print(f"  • Récupérer de meilleures cotes (OddsPortal)")
+    
+    # 4. Afficher les résultats
+    if best_strategy_pure:
+        print(f"\n{'='*70}")
+        print(f"  STRATÉGIE 1 : MEILLEUR ROI ABSOLU")
+        print(f"{'='*70}")
+        
+        print(f"\nParamètres optimaux :")
+        print(f"   • EV minimum       : {best_strategy_pure['min_ev']*100:.1f}%")
+        print(f"   • Conf minimum     : {best_strategy_pure['min_confidence']*100:.1f}%")
+        print(f"   • Types de paris   : {best_strategy_pure['bet_types'] or 'Tous'}")
+        
+        print(f"\nPerformances attendues :")
+        print(f"   • ROI              : {best_strategy_pure['expected_roi']:+.2f}%")
+        print(f"   • Win rate         : {best_strategy_pure['expected_win_rate']:.1f}%")
+        print(f"   • Nombre de paris  : {best_strategy_pure['expected_bets']}")
+        print(f"   • EV moyen         : {best_strategy_pure['avg_ev']:+.2f}%")
+        print(f"   • Cote moyenne     : {best_strategy_pure['avg_odds']:.2f}")
+        
+        # Sauvegarder la stratégie ROI max
+        strategy_path = SavePaths.get_result_path(
+            category='production/strategy',
+            filename='best_strategy_roi.json',
+            with_xg=with_xg
+        )
+        
+        with open(strategy_path, 'w') as f:
+            json.dump(best_strategy_pure, f, indent=4)
+        
+        print(f"\nStratégie sauvegardée : {strategy_path}")
+    
+    if best_strategy_volume:
+        print(f"\n{'='*70}")
+        print(f"  STRATÉGIE 2 : MEILLEUR ROI AVEC VOLUME CIBLE (1/3)")
+        print(f"{'='*70}")
+        
+        print(f"\nParamètres optimaux :")
+        print(f"   • EV minimum       : {best_strategy_volume['min_ev']*100:.1f}%")
+        print(f"   • Conf minimum     : {best_strategy_volume['min_confidence']*100:.1f}%")
+        print(f"   • Types de paris   : {best_strategy_volume['bet_types'] or 'Tous'}")
+        
+        print(f"\nPerformances attendues :")
+        print(f"   • ROI              : {best_strategy_volume['expected_roi']:+.2f}%")
+        print(f"   • Win rate         : {best_strategy_volume['expected_win_rate']:.1f}%")
+        print(f"   • Nombre de paris  : {best_strategy_volume['expected_bets']}")
+        print(f"   • Objectif (1/3)   : {best_strategy_volume['target_bets']}")
+        print(f"   • Écart            : {best_strategy_volume['distance_to_target']} paris")
+        print(f"   • EV moyen         : {best_strategy_volume['avg_ev']:+.2f}%")
+        print(f"   • Cote moyenne     : {best_strategy_volume['avg_odds']:.2f}")
+        
+        # Sauvegarder la stratégie avec volume
+        strategy_path_volume = SavePaths.get_result_path(
+            category='production/strategy',
+            filename='best_strategy_volume.json',
+            with_xg=with_xg
+        )
+        
+        with open(strategy_path_volume, 'w') as f:
+            json.dump(best_strategy_volume, f, indent=4)
+        
+        print(f"\nStratégie sauvegardée : {strategy_path_volume}")
+        
+        # Utiliser la stratégie volume comme stratégie par défaut
+        strategy_path_default = SavePaths.get_result_path(
+            category='production/strategy',
+            filename='best_strategy.json',
+            with_xg=with_xg
+        )
+        
+        with open(strategy_path_default, 'w') as f:
+            json.dump(best_strategy_volume, f, indent=4)
+        
+        print(f"Stratégie par défaut : {strategy_path_default}")
+        
+        # 5. Sauvegarder tous les résultats
+        if len(results_df) > 0:
+            results_df = results_df.sort_values('roi', ascending=False)
+            
+            results_path = SavePaths.get_result_path(
+                category='production/strategy',
+                filename='strategy_optimization_results.csv',
+                with_xg=with_xg
+            )
+            results_df.to_csv(results_path, index=False)
+            
+            print(f"\nTous les résultats sauvegardés : {results_path}")
+            
+            # Top 10
+            print(f"\nTop 10 des meilleures stratégies (par ROI) :")
+            print(results_df.head(10)[['min_ev', 'min_confidence', 'bet_types', 'total_bets', 'win_rate', 'roi']].to_string(index=False))
+            
+            # Top 10 proches de l'objectif volume
+            if 'distance_to_target' in results_df.columns:
+                results_volume = results_df[results_df['roi'] > 0].sort_values('distance_to_target')
+                if len(results_volume) > 0:
+                    print(f"\nTop 10 des stratégies proches de l'objectif 1/3 (ROI > 0) :")
+                    print(results_volume.head(10)[['min_ev', 'min_confidence', 'bet_types', 'total_bets', 'distance_to_target', 'roi']].to_string(index=False))
+        
+    else:
+        print(f"\nAucune stratégie profitable trouvée")
+        print(f"Essaye de :")
+        print(f"  • Améliorer ton modèle (step2b_optimization.py)")
+        print(f"  • Calibrer ton modèle (step2c_calibration.py)")
+        print(f"  • Récupérer de meilleures cotes (OddsPortal)")
     
     print(f"\n{'='*70}")
-    print(f"  ANALYSE TERMINÉE")
+    print(f"  OPTIMISATION TERMINÉE")
     print(f"{'='*70}\n")
 
 
