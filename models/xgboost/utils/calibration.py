@@ -3,6 +3,7 @@ Classe de calibration manuelle pour XGBoost.
 """
 
 import numpy as np
+import pandas as pd
 from sklearn.isotonic import IsotonicRegression
 
 
@@ -49,3 +50,48 @@ class ManualCalibratedClassifier:
     def predict(self, X):
         probs = self.predict_proba(X)
         return np.argmax(probs, axis=1)
+
+
+class ManualCalibratedEnsemble:
+    """Calibre un ensemble de modèles avec Isotonic Regression"""
+    
+    def __init__(self, models: list):
+        self.models = models
+        self.calibrators = [None, None, None]  # Un par classe
+        self.is_calibrated = False
+    
+    def fit(self, X, y):
+        """Calibre sur les probabilités moyennes de l'ensemble"""
+        # Prédictions moyennes
+        probs_list = [m.predict_proba(pd.DataFrame(X, columns=self.models[0].features)) 
+                     for m in self.models]
+        probs_avg = np.mean(probs_list, axis=0)
+        
+        # Calibrer chaque classe
+        for class_idx in range(3):
+            calibrator = IsotonicRegression(out_of_bounds='clip')
+            calibrator.fit(probs_avg[:, class_idx], (y == class_idx).astype(int))
+            self.calibrators[class_idx] = calibrator
+        
+        self.is_calibrated = True
+    
+    def predict_proba(self, df):
+        """Prédit avec calibration"""
+        # Prédictions moyennes
+        probs_list = [m.predict_proba(df) for m in self.models]
+        probs_avg = np.mean(probs_list, axis=0)
+        
+        if not self.is_calibrated:
+            return probs_avg
+        
+        # Appliquer calibration
+        probs_calibrated = np.zeros_like(probs_avg)
+        for class_idx in range(3):
+            probs_calibrated[:, class_idx] = self.calibrators[class_idx].predict(
+                probs_avg[:, class_idx]
+            )
+        
+        # Renormaliser (somme = 1)
+        probs_calibrated = probs_calibrated / probs_calibrated.sum(axis=1, keepdims=True)
+        
+        return probs_calibrated

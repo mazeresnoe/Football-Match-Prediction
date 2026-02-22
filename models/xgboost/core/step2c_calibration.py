@@ -1,13 +1,13 @@
 """
-Step 2c : Calibration manuelle des probabilités (version robuste)
-Utilise isotonic regression manuelle pour éviter les problèmes de version sklearn
+Step 2c : Calibration des probabilités
+NOTE: Ce script n'est utile QUE pour les modèles SINGLE.
+Les ensembles créés par step2b sont DÉJÀ calibrés.
 """
 
 import pandas as pd
 import numpy as np
 import joblib
-from sklearn.isotonic import IsotonicRegression
-from sklearn.metrics import log_loss, brier_score_loss
+from sklearn.metrics import log_loss
 import matplotlib.pyplot as plt
 import seaborn as sns
 from pathlib import Path
@@ -17,7 +17,8 @@ sys.path.append(str(Path(__file__).parent.parent.parent.parent.resolve()))
 import models.configs.global_config as cfg
 import models.utils as utils
 from models.configs.save_paths import SavePaths
-from models.xgboost.utils.calibration import ManualCalibratedClassifier
+from models.xgboost.utils.calibration import ManualCalibratedClassifier, ManualCalibratedEnsemble
+from models.xgboost.core.step2b_optimization import XGBoostImproved
 
 sns.set_style("whitegrid")
 
@@ -92,15 +93,15 @@ def plot_calibration_curve(y_true, probs_before, probs_after, with_xg: bool):
 def main():
     print(f"""
 ╔══════════════════════════════════════════════════════════════╗
-║      STEP 2C : CALIBRATION MANUELLE DES PROBABILITÉS         ║
+║      STEP 2C : CALIBRATION DES PROBABILITÉS                  ║
 ╚══════════════════════════════════════════════════════════════╝
     """)
     
     # Configuration
     with_xg = False
     
-    # 1. Charger le modèle optimisé
-    print("\n Chargement du modèle optimisé...")
+    # 1. Charger le modèle
+    print("\n📂 Chargement du modèle...")
     
     # Chercher le modèle le plus récent dans experiments
     model_path = SavePaths.get_latest_model('experiments', with_xg=with_xg)
@@ -117,14 +118,47 @@ def main():
     
     print(f"   Chargement depuis : {model_path}")
     model_data = joblib.load(model_path)
-    xgb_model = model_data['model']
-    features = model_data['features']
     
-    print(f"✅ Modèle chargé : {len(features)} features")
+    # ========================================
+    # VÉRIFIER SI C'EST UN ENSEMBLE OU SINGLE
+    # ========================================
+    
+    if 'ensemble' in model_data:
+        # C'est un ensemble déjà calibré
+        print(f"\n{'='*70}")
+        print(f"  ⚠️  MODÈLE ENSEMBLE DÉTECTÉ")
+        print(f"{'='*70}")
+        print(f"\n❌ Ce script n'est pas nécessaire pour les ensembles !")
+        print(f"\nRaison :")
+        print(f"  • Les ensembles créés par step2b_optimization.py")
+        print(f"  • sont DÉJÀ calibrés avec Isotonic Regression")
+        print(f"  • sur les données Train+CV combinées")
+        print(f"\nAction :")
+        print(f"  ✅ Utilisez directement l'ensemble sauvegardé")
+        print(f"  ✅ Passez à optimize_strategy.py pour value bets")
+        print(f"\nCe script est uniquement utile pour :")
+        print(f"  • Les modèles SINGLE non calibrés")
+        print(f"  • Les anciens modèles sans ensemble")
+        print(f"\n{'='*70}\n")
+        return
+    
+    elif 'model' in model_data:
+        # C'est un single model
+        xgb_model = model_data['model']
+        features = model_data['features']
+        print(f"✅ Modèle SINGLE chargé : {len(features)} features")
+        print(f"\n⚠️  NOTE : Les ensembles (step2b) sont recommandés")
+        print(f"   Continuons avec la calibration du modèle single...\n")
+        
+    else:
+        print("❌ Format de modèle inconnu")
+        return
     
     # 2. Charger les données
+    print("📂 Chargement des données...")
     df = utils.load_data(with_xg=with_xg, merge_odds=True)
     train_df, cv_df, test_df = utils.train_cv_test_split(df)
+    print("✅ Données chargées\n")
     
     # 3. Préparer les données
     X_cv = cv_df[features].values
@@ -136,7 +170,7 @@ def main():
     y_test_idx = np.array([{1: 0, 0: 1, -1: 2}[y] for y in y_test])
     
     # 4. Prédictions AVANT calibration
-    print("\n Évaluation AVANT calibration...")
+    print("📊 Évaluation AVANT calibration...")
     probs_cv_before = xgb_model.predict_proba(X_cv)
     probs_test_before = xgb_model.predict_proba(X_test)
     
@@ -152,15 +186,15 @@ def main():
     print(f"   • Brier Score (CV): {brier_cv_before:.4f}")
     
     # 5. CALIBRATION MANUELLE
-    print(f"\n Calibration isotonique manuelle...")
+    print(f"\n🔧 Calibration isotonique...")
     
     calibrated_model = ManualCalibratedClassifier(xgb_model, method='isotonic')
     calibrated_model.fit(X_cv, y_cv_idx)
     
-    print(f"   ✅ Calibration terminée (3 calibrateurs isotoniques créés)")
+    print(f"✅ Calibration terminée (3 calibrateurs isotoniques créés)")
     
     # 6. Prédictions APRÈS calibration
-    print("\n Évaluation APRÈS calibration...")
+    print("\n📊 Évaluation APRÈS calibration...")
     probs_cv_after = calibrated_model.predict_proba(X_cv)
     probs_test_after = calibrated_model.predict_proba(X_test)
     
@@ -213,21 +247,20 @@ def main():
             "XGBoost APRÈS calibration"
         )
         
-        print(f"\n AVANT CALIBRATION")
+        print(f"\n📊 AVANT CALIBRATION")
         utils.print_evaluation_summary(res_before, "TEST")
         
-        print(f"\n APRÈS CALIBRATION")
+        print(f"\n📊 APRÈS CALIBRATION")
         utils.print_evaluation_summary(res_after, "TEST")
         
         # Amélioration du ROI
         roi_improvement = res_after['roi'] - res_before['roi']
-        print(f"\n Amélioration du ROI : {roi_improvement:+.2f} points")
+        print(f"\n📈 Amélioration du ROI : {roi_improvement:+.2f} points")
         
         if res_after['roi'] > 0:
-            print(f" EXCELLENT ! ROI POSITIF : {res_after['roi']:.2f}%")
+            print(f"✅ EXCELLENT ! ROI POSITIF : {res_after['roi']:.2f}%")
         else:
-            print(f" ROI encore négatif : {res_after['roi']:.2f}%")
-            print(f"   → Essaye d'être plus sélectif dans detect_value_bets.py")
+            print(f"⚠️  ROI encore négatif : {res_after['roi']:.2f}%")
     
     # 9. Métriques TEST (sans odds)
     logloss_test_before = log_loss(y_test_idx, probs_test_before)
@@ -240,7 +273,7 @@ def main():
     brier_test_after = np.mean(np.sum((probs_test_after - y_test_onehot) ** 2, axis=1))
     
     print(f"\n{'='*70}")
-    print(f"  MÉTRIQUES SUR TEST SET (global)")
+    print(f"  MÉTRIQUES SUR TEST SET")
     print(f"{'='*70}")
     print(f"Log Loss  : {logloss_test_before:.4f} → {logloss_test_after:.4f}")
     print(f"Brier     : {brier_test_before:.4f} → {brier_test_after:.4f}")
@@ -249,11 +282,8 @@ def main():
     plot_calibration_curve(y_cv, probs_cv_before, probs_cv_after, with_xg)
     
     # 11. Sauvegarder le modèle calibré EN PRODUCTION
-
-    # Archiver l'ancien modèle de production si existe
     SavePaths.archive_current_model('xgboost_calibrated', with_xg=with_xg)
 
-    # Sauvegarder le nouveau modèle calibré
     model_path = SavePaths.get_model_path(
         category='production',
         model_name='xgboost_calibrated',
@@ -265,12 +295,12 @@ def main():
         'method': 'isotonic_manual'
     }, model_path)
 
-    print(f"\n✅ Modèle calibré sauvegardé EN PRODUCTION : {model_path}")
+    print(f"\n✅ Modèle calibré sauvegardé : {model_path}")
     
     # 12. Sauvegarder les résultats
     results = pd.DataFrame([
         {
-            'model': 'XGBoost Optimized',
+            'model': 'XGBoost Single',
             'dataset': 'test',
             'log_loss': logloss_test_before,
             'brier_score': brier_test_before,
@@ -292,7 +322,6 @@ def main():
     )
     results.to_csv(result_path, index=False)
 
-    # Sauvegarder les métadonnées
     if mask_odds.sum() > 0:
         SavePaths.save_metadata(
             category='step2c_calibration',
@@ -309,9 +338,10 @@ def main():
     print(f"✅ Résultats sauvegardés : {result_path}")
     
     print(f"\n{'='*70}")
-    print(f"  CALIBRATION TERMINÉE")
+    print(f"  CALIBRATION TERMINÉE ✅")
     print(f"{'='*70}\n")
 
 
 if __name__ == "__main__":
     main()
+

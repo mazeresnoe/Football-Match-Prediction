@@ -143,13 +143,12 @@ def generate_summary_report(results_dir: Path, with_xg: bool = False):
     
     print("📊 CLASSEMENT DES MODÈLES (sur TEST set)")
     print("-" * 70)
-    print(test_df[['model', 'n_features', 'accuracy', 'log_loss', 
+    print(test_df[['model', 'accuracy', 'log_loss', 
                    'brier_score', 'roi']].to_string(index=False))
     
     # Meilleur modèle
     best_model = test_df.iloc[0]
     print(f"\n🏆 MEILLEUR MODÈLE : {best_model['model']}")
-    print(f"   • Nombre de features : {best_model['n_features']:.0f}")
     print(f"   • Accuracy           : {best_model['accuracy']:.4f}")
     print(f"   • Log Loss           : {best_model['log_loss']:.4f}")
     print(f"   • Brier Score        : {best_model['brier_score']:.4f}")

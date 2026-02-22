@@ -510,11 +510,10 @@ def main():
         print(f"   • ROI              : {best_strategy_volume['expected_roi']:+.2f}%")
         print(f"   • Win rate         : {best_strategy_volume['expected_win_rate']:.1f}%")
         print(f"   • Nombre de paris  : {best_strategy_volume['expected_bets']}")
-        print(f"   • Objectif (1/3)   : {best_strategy_volume['target_bets']}")
-        print(f"   • Écart            : {best_strategy_volume['distance_to_target']} paris")
+        print(f"   • Minimum requis   : {best_strategy_volume['min_bets_per_year']} paris/an")
         print(f"   • EV moyen         : {best_strategy_volume['avg_ev']:+.2f}%")
         print(f"   • Cote moyenne     : {best_strategy_volume['avg_odds']:.2f}")
-        
+
         # Sauvegarder la stratégie avec volume
         strategy_path_volume = SavePaths.get_result_path(
             category='production/strategy',
