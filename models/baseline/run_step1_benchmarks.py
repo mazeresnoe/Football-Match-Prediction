@@ -96,7 +96,7 @@ for dataset_name, dataset in datasets.items():
 # ========================================
 
 results_df = pd.DataFrame(all_results)
-utils.save_results(results_df.to_dict("records"), "baseline/step1_baselines_benchmark.csv")
+utils.save_results(results_df.to_dict("records"), "step1_baselines/baseline_benchmark.csv")
 
 print("\n✅ STEP 1 TERMINÉ — BENCHMARK OFFICIEL ÉTABLI")
 

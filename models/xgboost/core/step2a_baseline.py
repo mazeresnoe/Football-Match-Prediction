@@ -174,7 +174,22 @@ def main():
     print(f"\n Top 15 features importantes :")
     print(xgb_model.get_feature_importance(top_n=15).to_string(index=False))
 
-    # 6. Évaluation sur CV
+    # 6. Évaluation sur TRAIN
+    y_train_true = train_df[configs.TARGET_COL].values
+    probs_train = xgb_model.predict_proba(train_df)
+    odds_train = train_df[['odds_home', 'odds_draw', 'odds_away']].copy()
+    mask_odds_train = odds_train.notna().all(axis=1)
+
+    res_train = utils.evaluate_predictions(
+        y_train_true[mask_odds_train],
+        probs_train[mask_odds_train],
+        odds_train[mask_odds_train],
+        "XGBoost Baseline"
+    )
+
+    utils.print_evaluation_summary(res_train, "TRAIN")
+
+    # 7. Évaluation sur CV
     y_cv_true = cv_df[configs.TARGET_COL].values
     probs_cv = xgb_model.predict_proba(cv_df)
     odds_cv = cv_df[['odds_home', 'odds_draw', 'odds_away']].copy()
@@ -184,7 +199,7 @@ def main():
     )
     utils.print_evaluation_summary(res_cv, "CV")
 
-    # 7. Évaluation sur Test
+    # 8. Évaluation sur Test
     y_test_true = test_df[configs.TARGET_COL].values
     probs_test = xgb_model.predict_proba(test_df)
     odds_test = test_df[['odds_home', 'odds_draw', 'odds_away']].copy()
@@ -194,7 +209,7 @@ def main():
     )
     utils.print_evaluation_summary(res_test, "TEST")
 
-    # 8. Comparer avec baselines
+    # 9. Comparer avec baselines
     baseline_path = SavePaths.get_result_path(
         category='step2a_baseline',
         filename='baseline_comparison_no_xg.csv',

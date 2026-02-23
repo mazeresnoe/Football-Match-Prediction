@@ -42,6 +42,7 @@ from models.xgboost.configs.features_config import (
 
 # Import calibration depuis utils
 from models.xgboost.utils.calibration import ManualCalibratedClassifier, ManualCalibratedEnsemble
+
 sns.set_style("whitegrid")
 
 
