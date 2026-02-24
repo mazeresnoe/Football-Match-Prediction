@@ -162,13 +162,13 @@ Football-Match-Prediction/
 
 ## 📚 Documentation
 
-Detailed documentation available in [`Readme_details/`](Readme_details/):
+Detailed documentation available in [`README/`](README/):
 
 - 📖 [**Project Journey**](Readme_details/project_journey.md) - Complete development story with challenges & solutions
 - 🏗️ [**Architecture**](Readme_details/architecture.md) - System design & complete workflow
 - 🎓 [**Lessons Learned**](Readme_details/lessons_learned.md) - What worked, what didn't, key insights
 - ⚠️ [**Limitations**](Readme_details/limitations.md) - Current constraints & known issues
-- 🔮 [**Future Work**](Readme_details/future.md) - Planned improvements & roadmap
+- 🔮 [**Future Work**](Readme_details/future_work.md) - Planned improvements & roadmap
 
 ---
 
