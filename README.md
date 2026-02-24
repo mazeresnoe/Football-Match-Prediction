@@ -164,11 +164,11 @@ Football-Match-Prediction/
 
 Detailed documentation available in [`README/`](README/):
 
-- 📖 [**Project Journey**](README/project_journey.md) - Complete development story with challenges & solutions
-- 🏗️ [**Architecture**](README/architecture.md) - System design & complete workflow
-- 🎓 [**Lessons Learned**](README/lessons_learned.md) - What worked, what didn't, key insights
-- ⚠️ [**Limitations**](README/limitations.md) - Current constraints & known issues
-- 🔮 [**Future Work**](README/future_work.md) - Planned improvements & roadmap
+- 📖 [**Project Journey**](Readme_details/project_journey.md) - Complete development story with challenges & solutions
+- 🏗️ [**Architecture**](Readme_details/architecture.md) - System design & complete workflow
+- 🎓 [**Lessons Learned**](Readme_details/lessons_learned.md) - What worked, what didn't, key insights
+- ⚠️ [**Limitations**](Readme_details/limitations.md) - Current constraints & known issues
+- 🔮 [**Future Work**](Readme_details/future_work.md) - Planned improvements & roadmap
 
 ---
 
