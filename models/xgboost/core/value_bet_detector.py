@@ -25,6 +25,7 @@ sys.path.append(str(Path(__file__).parent.parent.parent.parent.resolve()))
 import models.configs.global_config as cfg
 import models.utils as utils
 from models.configs.save_paths import SavePaths
+from models.xgboost.core.step2b_optimization import XGBoostImproved
 
 
 def calculate_expected_value(model_probs, bookmaker_odds):
@@ -76,7 +77,7 @@ def extract_value_bets(df, model, features, strategy):
     bet_types = strategy.get('bet_types', None)
     
     # Prédictions
-    X = df[features].values
+    X = df[features]
     probs = model.predict_proba(X)
     
     # Filtrer les matchs avec odds
@@ -278,7 +279,7 @@ def main():
     
     print(f"Modèle : {model_path.name}")
     model_data = joblib.load(model_path)
-    model = model_data['model']
+    model = model_data.get('model', model_data.get('ensemble'))
     features = model_data['features']
     print(f"Features : {len(features)}")
     

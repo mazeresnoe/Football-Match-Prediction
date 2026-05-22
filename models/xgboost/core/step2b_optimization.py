@@ -305,7 +305,7 @@ def optimize_hyperparameters_optimal(train_df, features: list, n_trials: int = 1
             brier_scores.append(brier)
         
         return np.mean(brier_scores)
-    
+   
     study = optuna.create_study(
         direction='minimize',
         sampler=TPESampler(seed=cfg.RANDOM_STATE)
@@ -565,6 +565,21 @@ STRATÉGIE:
     }, model_path)
     
     print(f"\n✅ Modèle sauvegardé : {model_path}")
+
+    # ── Promotion automatique en production ──────────────────
+    SavePaths.archive_current_model('xgboost_calibrated', with_xg=with_xg)
+    prod_path = SavePaths.get_model_path(
+        category='production',
+        model_name='xgboost_calibrated',
+        with_xg=with_xg
+    )
+    joblib.dump({
+        'model':       ensemble,
+        'features':    best_features,
+        'params':      final_params,
+        'is_ensemble': True,
+    }, prod_path)
+    print(f"✅ Modèle promu en production : {prod_path}")
     
     # Résultats
     result_path = SavePaths.get_result_path(

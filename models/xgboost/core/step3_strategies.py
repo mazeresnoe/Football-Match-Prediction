@@ -30,6 +30,7 @@ sys.path.append(str(Path(__file__).parent.parent.parent.parent.resolve()))
 import models.configs.global_config as cfg
 import models.utils as utils
 from models.configs.save_paths import SavePaths
+from models.xgboost.core.step2b_optimization import XGBoostImproved
 
 
 def calculate_expected_value(model_probs, bookmaker_odds):
@@ -48,7 +49,7 @@ def find_value_bets_strategy(df, model, features, min_ev, min_confidence, bet_ty
         bet_types: Liste des types de paris autorisés ['Home', 'Draw', 'Away']
                   Si None, tous les types sont autorisés
     """
-    X = df[features].values
+    X = df[features]
     probs = model.predict_proba(X)
     
     odds_df = df[['odds_home', 'odds_draw', 'odds_away']].copy()
@@ -316,7 +317,7 @@ def main():
     
     print(f"Modèle : {model_path.name}")
     model_data = joblib.load(model_path)
-    model = model_data['model']
+    model = model_data.get('model', model_data.get('ensemble'))
     features = model_data['features']
     print(f"Features : {len(features)}")
     

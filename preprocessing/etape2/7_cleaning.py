@@ -292,7 +292,7 @@ class DataCleanerV2:
     # ============================================
     # ÉTAPE 5: TRANSFORMATIONS
     # ============================================
-    
+   
     def _apply_transformations(self, df: pd.DataFrame) -> pd.DataFrame:
         """Clip outliers + Log transform skewed features"""
         self._log_header("STEP 5: TRANSFORMATIONS")

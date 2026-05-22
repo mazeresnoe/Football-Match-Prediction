@@ -77,6 +77,9 @@ class ManualCalibratedEnsemble:
     
     def predict_proba(self, df):
         """Prédit avec calibration"""
+        # Convertir en DataFrame si numpy array
+        if isinstance(df, np.ndarray):
+            df = pd.DataFrame(df, columns=self.models[0].features)
         # Prédictions moyennes
         probs_list = [m.predict_proba(df) for m in self.models]
         probs_avg = np.mean(probs_list, axis=0)
